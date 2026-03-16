@@ -1,0 +1,57 @@
+name: AI GitHub Bot
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  ai-reply:
+    runs-on: ubuntu-latest
+    if: contains(github.event.comment.body, '/ai')
+
+    steps:
+      - name: Install jq
+        run: sudo apt-get install jq
+
+      - name: Ask AI
+        id: ask
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          COMMENT: ${{ github.event.comment.body }}
+        run: |
+
+          PROMPT="${COMMENT#/ai }"
+
+          RESPONSE=$(curl https://api.openai.com/v1/chat/completions \
+          -s \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer $OPENAI_API_KEY" \
+          -d "{
+            \"model\": \"gpt-4o-mini\",
+            \"messages\": [
+              {\"role\": \"system\", \"content\": \"Jesteś pomocnym botem GitHub\"},
+              {\"role\": \"user\", \"content\": \"$PROMPT\"}
+            ]
+          }")
+
+          TEXT=$(echo $RESPONSE | jq -r '.choices[0].message.content')
+
+          echo "reply<<EOF" >> $GITHUB_OUTPUT
+          echo "$TEXT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Reply to Issue
+        uses: actions/github-script@v7
+        env:
+          AI_REPLY: ${{ steps.ask.outputs.reply }}
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: process.env.AI_REPLY
+            })
